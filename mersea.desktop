@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Mersea
+Comment=Open Mermaid diagrams in visual editor
+Exec=mersea %f
+Type=Application
+Terminal=false
+MimeType=text/x-mermaid;
+Categories=Development;Graphics;

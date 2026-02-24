@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "mersea"
+version = "0.1.0"
+description = "Mermaid diagram visual editor bridge"
+authors = ["fedor"]
+packages = [{include = "mersea"}]
+
+[tool.poetry.scripts]
+mersea = "mersea.cli:main"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+playwright = "^1.40"
+click = "^8.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
