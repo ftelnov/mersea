@@ -1,6 +1,8 @@
 (function () {
   "use strict";
 
+  const SAVE_URL = "http://127.0.0.1:__MERSEA_PORT__/save";
+
   const BTN_STYLE = [
     "padding:10px 20px",
     "font-size:16px",
@@ -48,40 +50,46 @@
   async function saveDiagram() {
     const hash = window.location.hash.slice(1);
     if (!hash) {
-      merseaToast("No diagram data in URL", true);
+      toast("No diagram data in URL", true);
       return;
     }
     try {
-      await window.mersea_save(hash);
+      const resp = await fetch(SAVE_URL, { method: "POST", body: hash });
+      if (resp.ok) {
+        toast("Saved \u2713");
+      } else {
+        const msg = await resp.text();
+        toast("Save failed: " + msg, true);
+      }
     } catch (err) {
-      merseaToast("Save failed: " + err.message, true);
+      toast("Save failed: " + err.message, true);
     }
   }
 
   async function saveAndClose() {
     const hash = window.location.hash.slice(1);
     if (!hash) {
-      merseaToast("No diagram data in URL", true);
+      toast("No diagram data in URL", true);
       return;
     }
     try {
-      await window.mersea_save(hash);
-      // Small delay so the user sees the toast, then close
-      setTimeout(() => window.close(), 400);
+      const resp = await fetch(SAVE_URL, { method: "POST", body: hash });
+      if (resp.ok) {
+        toast("Saved \u2713");
+        setTimeout(() => window.close(), 400);
+      } else {
+        const msg = await resp.text();
+        toast("Save failed: " + msg, true);
+      }
     } catch (err) {
-      merseaToast("Save failed: " + err.message, true);
+      toast("Save failed: " + err.message, true);
     }
   }
 
-  // Toast notification
-  window.mersea_toast = function (msg, isError) {
-    merseaToast(msg, isError);
-  };
-
-  function merseaToast(msg, isError) {
-    const toast = document.createElement("div");
-    toast.textContent = msg;
-    toast.style.cssText = [
+  function toast(msg, isError) {
+    const el = document.createElement("div");
+    el.textContent = msg;
+    el.style.cssText = [
       "position:fixed",
       "bottom:70px",
       "right:20px",
@@ -95,10 +103,10 @@
       "opacity:1",
       "transition:opacity 0.5s",
     ].join(";");
-    document.body.appendChild(toast);
+    document.body.appendChild(el);
     setTimeout(() => {
-      toast.style.opacity = "0";
-      setTimeout(() => toast.remove(), 500);
+      el.style.opacity = "0";
+      setTimeout(() => el.remove(), 500);
     }, 2000);
   }
 })();

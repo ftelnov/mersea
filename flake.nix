@@ -14,17 +14,11 @@
       pkgs = nixpkgs.legacyPackages.${system};
       mersea = pkgs.python3Packages.buildPythonApplication {
         pname = "mersea";
-        version = "0.1.0";
+        version = "0.2.0";
         src = ./.;
         pyproject = true;
         build-system = [pkgs.python3Packages.poetry-core];
-        dependencies = with pkgs.python3Packages; [click playwright];
         doCheck = false;
-        nativeBuildInputs = [pkgs.makeWrapper];
-        postFixup = ''
-          wrapProgram $out/bin/mersea \
-            --prefix LD_LIBRARY_PATH : "${pkgs.stdenv.cc.cc.lib}/lib"
-        '';
       };
     in {
       default = mersea;

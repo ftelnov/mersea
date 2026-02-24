@@ -1,76 +1,104 @@
-import asyncio
+import json
 import shutil
+import subprocess
+import tempfile
+import threading
+from functools import partial
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-
-from playwright.async_api import async_playwright
 
 from mersea import serde
 
-BROWSER_DATA = Path.home() / ".local" / "share" / "mersea" / "browser-data"
-INJECT_JS = Path(__file__).parent / "assets" / "inject.js"
 BASE_URL = "https://mermaid.ai/play"
+USER_DATA = Path.home() / ".local" / "share" / "mersea" / "browser-data"
+MANIFEST = json.dumps({
+    "manifest_version": 3,
+    "name": "Mersea",
+    "version": "1.0",
+    "content_scripts": [{
+        "matches": [
+            "*://mermaid.ai/play*",
+            "*://www.mermaidchart.com/play*",
+            "*://mermaid.live/*",
+        ],
+        "js": ["content.js"],
+        "run_at": "document_idle",
+    }],
+    "host_permissions": ["http://localhost/*"],
+})
+CONTENT_JS = Path(__file__).parent / "assets" / "content.js"
 
 
-def _find_chromium() -> str | None:
+def _find_chromium() -> str:
     for name in ("chromium", "chromium-browser", "google-chrome-stable", "google-chrome"):
         path = shutil.which(name)
         if path:
             return path
-    return None
+    raise RuntimeError("Chromium not found on PATH")
 
 
-async def open_editor(file_path: str, headless: bool = False) -> None:
+class _SaveHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length).decode()
+
+        try:
+            code = serde.decode(body)
+            self.server.target_path.write_text(code)
+            self.send_response(200)
+        except Exception as e:
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(str(e).encode())
+            return
+
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        pass  # silence logs
+
+
+def run(file_path: str) -> None:
     path = Path(file_path).resolve()
     code = path.read_text()
     fragment = serde.encode(code)
     url = f"{BASE_URL}#{fragment}"
 
-    BROWSER_DATA.mkdir(parents=True, exist_ok=True)
+    # Start HTTP server on random port
+    server = HTTPServer(("127.0.0.1", 0), _SaveHandler)
+    server.target_path = path
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
 
-    chromium = _find_chromium()
+    # Build temp extension with port baked in
+    ext_dir = tempfile.mkdtemp(prefix="mersea-ext-")
+    USER_DATA.mkdir(parents=True, exist_ok=True)
+    try:
+        Path(ext_dir, "manifest.json").write_text(MANIFEST)
+        content_js = CONTENT_JS.read_text().replace("__MERSEA_PORT__", str(port))
+        Path(ext_dir, "content.js").write_text(content_js)
 
-    async with async_playwright() as pw:
-        context = await pw.chromium.launch_persistent_context(
-            user_data_dir=str(BROWSER_DATA),
-            headless=headless,
-            executable_path=chromium,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--start-maximized",
-            ],
-            no_viewport=True,
-        )
-
-        page = context.pages[0] if context.pages else await context.new_page()
-
-        async def save_callback(hash_str: str) -> None:
-            try:
-                code = serde.decode(hash_str)
-                path.write_text(code)
-                await page.evaluate("window.mersea_toast('Saved \u2713')")
-            except Exception as e:
-                await page.evaluate(
-                    f"window.mersea_toast('Save failed: {e}', true)"
-                )
-
-        await page.expose_function("mersea_save", save_callback)
-        await page.goto(url, wait_until="domcontentloaded")
-
-        # Use evaluate() instead of add_script_tag() to bypass CSP
-        inject_code = INJECT_JS.read_text()
-        await page.evaluate(inject_code)
-
-        # Exit when page or browser is closed
-        closed = asyncio.Event()
-        page.on("close", lambda _: closed.set())
-        context.on("close", lambda _: closed.set())
-        await closed.wait()
-
-        try:
-            await context.close()
-        except Exception:
-            pass
-
-
-def run(file_path: str) -> None:
-    asyncio.run(open_editor(file_path))
+        chromium = _find_chromium()
+        proc = subprocess.Popen([
+            chromium,
+            f"--user-data-dir={USER_DATA}",
+            f"--disable-extensions-except={ext_dir}",
+            f"--load-extension={ext_dir}",
+            "--enable-extensions",
+            "--start-maximized",
+            "--disable-blink-features=AutomationControlled",
+            url,
+        ])
+        proc.wait()
+    finally:
+        server.shutdown()
+        shutil.rmtree(ext_dir, ignore_errors=True)

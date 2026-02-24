@@ -2,18 +2,22 @@
 
 Bridge between local `.mmd` files and [mermaid.ai](https://mermaid.ai/play) visual editor. Open a file, edit the diagram visually in the browser, Ctrl+S saves back to disk.
 
+No dependencies beyond Python 3.11+ and Chromium.
+
 ## Quickstart
 
 ```bash
-# Install dependencies
-cd ~/Projects/mersea && poetry install
+git clone https://github.com/ftelnov/mersea.git
+cd mersea
+pip install .
+mersea /path/to/diagram.mmd
+```
 
-# Install Playwright browser (first time only)
-poetry run playwright install chromium
+Or with pipx:
 
-# Open a diagram
-echo -e "graph TD\n    A-->B" > /tmp/test.mmd
-poetry run mersea /tmp/test.mmd
+```bash
+pipx install git+https://github.com/ftelnov/mersea.git
+mersea /path/to/diagram.mmd
 ```
 
 Browser opens fullscreen with your diagram loaded in mermaid.ai/play. Edit visually, then:
@@ -22,30 +26,29 @@ Browser opens fullscreen with your diagram loaded in mermaid.ai/play. Edit visua
 - **Save & Close** — saves and exits
 - Close the browser tab — mersea exits automatically
 
+Requires Chromium (or Google Chrome) on PATH.
+
 ## Nix
 
 ```bash
-# Build
-nix build
-
-# Run directly
-nix run . -- /tmp/test.mmd
+nix run github:ftelnov/mersea -- /path/to/diagram.mmd
 ```
 
 Use as a flake input:
 
 ```nix
-# flake.nix
-inputs.mersea.url = "path:/home/fedor/Projects/mersea";
+inputs.mersea.url = "github:ftelnov/mersea";
+inputs.mersea.inputs.nixpkgs.follows = "nixpkgs";
 
-# home.nix or wherever
+# Then use:
 inputs.mersea.packages.${pkgs.system}.default
 ```
 
 ## How it works
 
 1. Reads `.mmd` file and encodes it into a pako URL (same format mermaid.live uses)
-2. Launches Chromium via Playwright with a persistent profile (login cookies survive between sessions)
-3. Navigates to `mermaid.ai/play#pako:...`
-4. Injects save handler via CDP (bypasses CSP)
-5. On save: reads URL hash (updated in real-time by the editor), decodes pako, writes to file
+2. Starts a local HTTP server for save callbacks
+3. Generates a temporary Chrome extension with save UI (Ctrl+S, save button, toast notifications)
+4. Launches Chromium with `--load-extension` pointing to the temp extension
+5. On save: extension POSTs URL hash to localhost, Python decodes pako and writes to file
+6. When the browser closes, mersea cleans up and exits
