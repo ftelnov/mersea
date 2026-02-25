@@ -1,7 +1,9 @@
 (function () {
   "use strict";
 
-  const SAVE_URL = "http://127.0.0.1:__MERSEA_PORT__/save";
+  const BASE = "http://127.0.0.1:__MERSEA_PORT__";
+  const SAVE_URL = BASE + "/save";
+  const EVENTS_URL = BASE + "/events";
 
   const BTN_STYLE = [
     "padding:10px 20px",
@@ -46,6 +48,21 @@
   saveCloseBtn.onmouseleave = () => (saveCloseBtn.style.opacity = "1");
   saveCloseBtn.onclick = saveAndClose;
   bar.appendChild(saveCloseBtn);
+
+  // --- File watch: listen for external changes via SSE ---
+  let ignoreNextHashChange = false;
+
+  const sse = new EventSource(EVENTS_URL);
+  sse.onmessage = (event) => {
+    const fragment = event.data;
+    if (fragment && window.location.hash.slice(1) !== fragment) {
+      ignoreNextHashChange = true;
+      window.location.hash = fragment;
+      toast("Reloaded from disk");
+    }
+  };
+
+  // --- Save functions ---
 
   async function saveDiagram() {
     const hash = window.location.hash.slice(1);
