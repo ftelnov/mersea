@@ -8,7 +8,13 @@ import struct
 import subprocess
 import tempfile
 import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn, TCPServer
+import http.server
+
+
+class _ThreadingHTTPServer(ThreadingMixIn, http.server.HTTPServer):
+    daemon_threads = True
 from pathlib import Path
 
 from mersea import serde
@@ -179,7 +185,7 @@ def run(file_path: str) -> None:
     path = Path(file_path).resolve()
     state = _MerseaState(path)
 
-    server = HTTPServer(("127.0.0.1", 0), _Handler)
+    server = _ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
     server.mersea = state
     port = server.server_address[1]
     threading.Thread(target=server.serve_forever, daemon=True).start()
