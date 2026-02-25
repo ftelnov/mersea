@@ -96,7 +96,16 @@ def run(file_path: str) -> None:
             "--enable-extensions",
             "--start-maximized",
             "--disable-blink-features=AutomationControlled",
-            url,
+            # Suppress all Chrome UI noise
+            "--app=" + url,
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-infobars",
+            "--disable-session-crashed-bubble",
+            "--disable-component-update",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-features=TranslateUI",
+            "--noerrdialogs",
         ])
         proc.wait()
     finally:
