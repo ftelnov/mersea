@@ -3,6 +3,7 @@
 
   const BASE = "http://127.0.0.1:__MERSEA_PORT__";
   const SAVE_URL = BASE + "/save";
+  const CLOSE_URL = BASE + "/close";
   const EVENTS_URL = BASE + "/events";
 
   const BTN_STYLE = [
@@ -90,7 +91,7 @@
       const resp = await fetch(SAVE_URL, { method: "POST", body: hash });
       if (resp.ok) {
         toast("Saved \u2713");
-        setTimeout(() => window.close(), 400);
+        setTimeout(() => fetch(CLOSE_URL, { method: "POST" }), 400);
       } else {
         const msg = await resp.text();
         toast("Save failed: " + msg, true);

@@ -55,6 +55,13 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self):
+        if self.path == "/close":
+            self.send_response(200)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            if hasattr(self.server, "proc") and self.server.proc:
+                self.server.proc.terminate()
+            return
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length).decode()
         try:
@@ -215,9 +222,10 @@ def run(file_path: str) -> None:
             "--disable-session-crashed-bubble",
             "--disable-component-update",
             "--disable-backgrounding-occluded-windows",
-            "--disable-features=TranslateUI",
+            "--disable-features=TranslateUI,InfiniteSessionRestore",
             "--noerrdialogs",
         ])
+        server.proc = proc
         proc.wait()
     finally:
         state.stopped.set()
