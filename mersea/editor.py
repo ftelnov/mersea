@@ -18,10 +18,7 @@ USER_DATA = Path.home() / ".local" / "share" / "mersea" / "browser-data"
 MANIFEST = json.dumps({
     "manifest_version": 3,
     "name": "Mersea",
-    "version": "1.1",
-    "background": {
-        "service_worker": "background.js",
-    },
+    "version": "1.0",
     "content_scripts": [{
         "matches": [
             "*://mermaid.ai/play*",
@@ -33,22 +30,6 @@ MANIFEST = json.dumps({
     }],
     "host_permissions": ["http://127.0.0.1/*"],
 })
-BACKGROUND_JS = """\
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.type === "fetch") {
-    const opts = {};
-    if (msg.method) opts.method = msg.method;
-    if (msg.body !== undefined) opts.body = msg.body;
-    fetch(msg.url, opts)
-      .then(async (resp) => {
-        const text = await resp.text();
-        sendResponse({ ok: resp.ok, status: resp.status, text });
-      })
-      .catch((err) => sendResponse({ ok: false, error: err.message }));
-    return true;
-  }
-});
-"""
 CONTENT_JS = Path(__file__).parent / "assets" / "content.js"
 
 
@@ -62,8 +43,8 @@ def _find_chromium() -> str:
 
 class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == "/state":
-            self._handle_state()
+        if self.path == "/events":
+            self._handle_sse()
         else:
             self.send_error(404)
 
@@ -89,14 +70,25 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
-    def _handle_state(self):
-        mersea = self.server.mersea
-        data = json.dumps({"fragment": mersea.current_fragment, "version": mersea.version})
+    def _handle_sse(self):
         self.send_response(200)
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
-        self.wfile.write(data.encode())
+
+        mersea = self.server.mersea
+        last_seen = mersea.version
+        try:
+            while not mersea.stopped.is_set():
+                mersea.stopped.wait(timeout=1)
+                if mersea.version > last_seen:
+                    last_seen = mersea.version
+                    fragment = mersea.current_fragment
+                    self.wfile.write(f"data: {fragment}\n\n".encode())
+                    self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
 
     def log_message(self, format, *args):
         pass
@@ -197,7 +189,6 @@ def run(file_path: str) -> None:
     USER_DATA.mkdir(parents=True, exist_ok=True)
     try:
         Path(ext_dir, "manifest.json").write_text(MANIFEST)
-        Path(ext_dir, "background.js").write_text(BACKGROUND_JS)
         content_js = CONTENT_JS.read_text().replace("__MERSEA_PORT__", str(port))
         Path(ext_dir, "content.js").write_text(content_js)
 
@@ -209,6 +200,7 @@ def run(file_path: str) -> None:
             f"--disable-extensions-except={ext_dir}",
             f"--load-extension={ext_dir}",
             "--enable-extensions",
+            "--start-maximized",
             "--start-fullscreen",
             "--app=" + url,
             "--no-first-run",
