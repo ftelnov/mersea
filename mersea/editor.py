@@ -28,7 +28,7 @@ MANIFEST = json.dumps({
         "js": ["content.js"],
         "run_at": "document_idle",
     }],
-    "host_permissions": ["http://localhost/*"],
+    "host_permissions": ["http://127.0.0.1/*"],
 })
 CONTENT_JS = Path(__file__).parent / "assets" / "content.js"
 
@@ -160,8 +160,8 @@ def _watch_file(state: _MerseaState, ready: threading.Event | None = None):
     target_name = state.path.name.encode()
     try:
         while not state.stopped.is_set():
-            ready, _, _ = select.select([fd], [], [], 1.0)
-            if not ready:
+            readable, _, _ = select.select([fd], [], [], 1.0)
+            if not readable:
                 continue
             buf = os.read(fd, 4096)
             offset = 0

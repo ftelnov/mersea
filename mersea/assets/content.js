@@ -50,15 +50,13 @@
   bar.appendChild(saveCloseBtn);
 
   // --- File watch: listen for external changes via SSE ---
-  let ignoreNextHashChange = false;
-
   const sse = new EventSource(EVENTS_URL);
   sse.onmessage = (event) => {
     const fragment = event.data;
     if (fragment && window.location.hash.slice(1) !== fragment) {
-      ignoreNextHashChange = true;
+      // Must reload — mermaid.ai only reads the hash on page init
       window.location.hash = fragment;
-      toast("Reloaded from disk");
+      window.location.reload();
     }
   };
 
