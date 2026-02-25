@@ -1,10 +1,13 @@
+import ctypes
+import ctypes.util
 import json
 import os
+import select
 import shutil
+import struct
 import subprocess
 import tempfile
 import threading
-import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -129,18 +132,51 @@ class _MerseaState:
             self.changed.clear()
 
 
-def _watch_file(state: _MerseaState):
-    """Poll file for changes every 500ms."""
-    last_mtime = 0.0
-    while not state.stopped.is_set():
-        try:
-            mtime = os.path.getmtime(state.path)
-        except OSError:
-            mtime = 0.0
-        if mtime != last_mtime:
-            last_mtime = mtime
-            state.check_file()
-        state.stopped.wait(0.5)
+# inotify constants
+IN_MODIFY = 0x00000002
+IN_CLOSE_WRITE = 0x00000008
+IN_MOVED_TO = 0x00000080
+_WATCH_MASK = IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_TO
+_EVENT_STRUCT = struct.Struct("iIII")
+
+
+def _watch_file(state: _MerseaState, ready: threading.Event | None = None):
+    """Watch file for changes using inotify (zero-poll, instant)."""
+    libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+    fd = libc.inotify_init()
+    if fd < 0:
+        raise OSError(f"inotify_init failed: errno {ctypes.get_errno()}")
+
+    # Watch the parent directory — editors often write to a temp file then rename
+    watch_dir = str(state.path.parent).encode()
+    wd = libc.inotify_add_watch(fd, watch_dir, _WATCH_MASK)
+    if wd < 0:
+        os.close(fd)
+        raise OSError(f"inotify_add_watch failed: errno {ctypes.get_errno()}")
+
+    if ready:
+        ready.set()
+
+    target_name = state.path.name.encode()
+    try:
+        while not state.stopped.is_set():
+            ready, _, _ = select.select([fd], [], [], 1.0)
+            if not ready:
+                continue
+            buf = os.read(fd, 4096)
+            offset = 0
+            triggered = False
+            while offset < len(buf):
+                _, _, _, name_len = _EVENT_STRUCT.unpack_from(buf, offset)
+                name = buf[offset + _EVENT_STRUCT.size:offset + _EVENT_STRUCT.size + name_len]
+                name = name.rstrip(b"\x00")
+                if name == target_name:
+                    triggered = True
+                offset += _EVENT_STRUCT.size + name_len
+            if triggered:
+                state.check_file()
+    finally:
+        os.close(fd)
 
 
 def run(file_path: str) -> None:
