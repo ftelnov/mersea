@@ -18,7 +18,10 @@ USER_DATA = Path.home() / ".local" / "share" / "mersea" / "browser-data"
 MANIFEST = json.dumps({
     "manifest_version": 3,
     "name": "Mersea",
-    "version": "1.0",
+    "version": "1.1",
+    "background": {
+        "service_worker": "background.js",
+    },
     "content_scripts": [{
         "matches": [
             "*://mermaid.ai/play*",
@@ -30,6 +33,22 @@ MANIFEST = json.dumps({
     }],
     "host_permissions": ["http://127.0.0.1/*"],
 })
+BACKGROUND_JS = """\
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === "fetch") {
+    const opts = {};
+    if (msg.method) opts.method = msg.method;
+    if (msg.body !== undefined) opts.body = msg.body;
+    fetch(msg.url, opts)
+      .then(async (resp) => {
+        const text = await resp.text();
+        sendResponse({ ok: resp.ok, status: resp.status, text });
+      })
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+});
+"""
 CONTENT_JS = Path(__file__).parent / "assets" / "content.js"
 
 
@@ -43,8 +62,8 @@ def _find_chromium() -> str:
 
 class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == "/events":
-            self._handle_sse()
+        if self.path == "/state":
+            self._handle_state()
         else:
             self.send_error(404)
 
@@ -70,25 +89,14 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
-    def _handle_sse(self):
+    def _handle_state(self):
+        mersea = self.server.mersea
+        data = json.dumps({"fragment": mersea.current_fragment, "version": mersea.version})
         self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Content-Type", "application/json")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
-
-        mersea = self.server.mersea
-        last_seen = mersea.version
-        try:
-            while not mersea.stopped.is_set():
-                mersea.changed.wait(timeout=1)
-                if mersea.version > last_seen:
-                    last_seen = mersea.version
-                    fragment = mersea.current_fragment
-                    self.wfile.write(f"data: {fragment}\n\n".encode())
-                    self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError, OSError):
-            pass
+        self.wfile.write(data.encode())
 
     def log_message(self, format, *args):
         pass
@@ -101,7 +109,6 @@ class _MerseaState:
         self.path = path
         self.current_fragment = serde.encode(path.read_text())
         self.version = 0
-        self.changed = threading.Event()
         self.stopped = threading.Event()
         self._last_browser_content = None
         self._lock = threading.Lock()
@@ -114,7 +121,7 @@ class _MerseaState:
             self.current_fragment = serde.encode(code)
 
     def check_file(self):
-        """Called by file watcher. If file changed externally, update fragment."""
+        """Called by file watcher. If file changed externally, update state."""
         try:
             code = self.path.read_text()
         except OSError:
@@ -128,15 +135,12 @@ class _MerseaState:
         if fragment != self.current_fragment:
             self.current_fragment = fragment
             self.version += 1
-            self.changed.set()
-            self.changed.clear()
 
 
 # inotify constants
-IN_MODIFY = 0x00000002
 IN_CLOSE_WRITE = 0x00000008
 IN_MOVED_TO = 0x00000080
-_WATCH_MASK = IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_TO
+_WATCH_MASK = IN_CLOSE_WRITE | IN_MOVED_TO
 _EVENT_STRUCT = struct.Struct("iIII")
 
 
@@ -193,6 +197,7 @@ def run(file_path: str) -> None:
     USER_DATA.mkdir(parents=True, exist_ok=True)
     try:
         Path(ext_dir, "manifest.json").write_text(MANIFEST)
+        Path(ext_dir, "background.js").write_text(BACKGROUND_JS)
         content_js = CONTENT_JS.read_text().replace("__MERSEA_PORT__", str(port))
         Path(ext_dir, "content.js").write_text(content_js)
 
@@ -204,7 +209,7 @@ def run(file_path: str) -> None:
             f"--disable-extensions-except={ext_dir}",
             f"--load-extension={ext_dir}",
             "--enable-extensions",
-            "--start-maximized",
+            "--start-fullscreen",
             "--app=" + url,
             "--no-first-run",
             "--no-default-browser-check",

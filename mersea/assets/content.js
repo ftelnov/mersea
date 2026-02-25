@@ -3,7 +3,7 @@
 
   const BASE = "http://127.0.0.1:__MERSEA_PORT__";
   const SAVE_URL = BASE + "/save";
-  const EVENTS_URL = BASE + "/events";
+  const STATE_URL = BASE + "/state";
 
   const BTN_STYLE = [
     "padding:10px 20px",
@@ -49,18 +49,28 @@
   saveCloseBtn.onclick = saveAndClose;
   bar.appendChild(saveCloseBtn);
 
-  // --- File watch: listen for external changes via SSE ---
-  const sse = new EventSource(EVENTS_URL);
-  sse.onmessage = (event) => {
-    const fragment = event.data;
-    if (fragment && window.location.hash.slice(1) !== fragment) {
-      // Must reload — mermaid.ai only reads the hash on page init
-      window.location.hash = fragment;
-      window.location.reload();
-    }
-  };
+  // --- File watch: poll for external changes via background service worker ---
+  let lastVersion = 0;
+  setInterval(async () => {
+    try {
+      const resp = await chrome.runtime.sendMessage({
+        type: "fetch",
+        url: STATE_URL,
+      });
+      if (resp && resp.ok) {
+        const data = JSON.parse(resp.text);
+        if (data.version > lastVersion) {
+          lastVersion = data.version;
+          if (window.location.hash.slice(1) !== data.fragment) {
+            window.location.hash = data.fragment;
+            window.location.reload();
+          }
+        }
+      }
+    } catch (e) {}
+  }, 1500);
 
-  // --- Save functions ---
+  // --- Save functions (routed through background to bypass page CSP) ---
 
   async function saveDiagram() {
     const hash = window.location.hash.slice(1);
@@ -69,12 +79,16 @@
       return;
     }
     try {
-      const resp = await fetch(SAVE_URL, { method: "POST", body: hash });
-      if (resp.ok) {
+      const resp = await chrome.runtime.sendMessage({
+        type: "fetch",
+        url: SAVE_URL,
+        method: "POST",
+        body: hash,
+      });
+      if (resp && resp.ok) {
         toast("Saved \u2713");
       } else {
-        const msg = await resp.text();
-        toast("Save failed: " + msg, true);
+        toast("Save failed: " + (resp ? resp.error || resp.text : "no response"), true);
       }
     } catch (err) {
       toast("Save failed: " + err.message, true);
@@ -88,13 +102,17 @@
       return;
     }
     try {
-      const resp = await fetch(SAVE_URL, { method: "POST", body: hash });
-      if (resp.ok) {
+      const resp = await chrome.runtime.sendMessage({
+        type: "fetch",
+        url: SAVE_URL,
+        method: "POST",
+        body: hash,
+      });
+      if (resp && resp.ok) {
         toast("Saved \u2713");
         setTimeout(() => window.close(), 400);
       } else {
-        const msg = await resp.text();
-        toast("Save failed: " + msg, true);
+        toast("Save failed: " + (resp ? resp.error || resp.text : "no response"), true);
       }
     } catch (err) {
       toast("Save failed: " + err.message, true);
