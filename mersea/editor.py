@@ -95,7 +95,6 @@ def run(file_path: str) -> None:
             f"--load-extension={ext_dir}",
             "--enable-extensions",
             "--start-maximized",
-            "--disable-blink-features=AutomationControlled",
             # Suppress all Chrome UI noise
             "--app=" + url,
             "--no-first-run",
